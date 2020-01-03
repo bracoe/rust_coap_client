@@ -1,11 +1,15 @@
+use std::io::Write;
 use std::convert::TryInto;
 use std::fs::create_dir_all;
 use std::net::{SocketAddr, UdpSocket};
 use std::thread;
 use std::collections::LinkedList;
 use std::path::Path;
-use std::fs::File;
+use std::fs::{File};
 use std::env;
+use std::fs;
+use std::fs::OpenOptions;
+
 
 const MAX_MTU: usize = 15000; //MTU assumed to be 1500
 
@@ -19,6 +23,7 @@ const CODE_DELETE: u8 = 4;
 const CLASS_SUCCESS: u8 = 2;
 const CODE_CREATED: u8 = 1;
 const CODE_DELETED: u8 = 2;
+const CODE_CHANGED: u8 = 3;
 
 const CLASS_CLIENT_ERROR: u8 = 4;
 const CODE_BAD_REQUEST: u8 = 0;
@@ -133,11 +138,11 @@ fn execute_request(message:CoapMessage, socket: UdpSocket, sender_adress: Socket
 				}
 				CODE_PUT => { //PUT
 					println!("Got method code: {}", message.header.code);
-					send_coap_response(CLASS_CLIENT_ERROR, CODE_METHOD_NOT_ALLOWED, message, socket, sender_adress);
+					handle_put_request(message, socket, sender_adress)?;
 				}
 				CODE_DELETE => { //DELETE
 					println!("Got method code: {}", message.header.code);
-					send_coap_response(CLASS_CLIENT_ERROR, CODE_METHOD_NOT_ALLOWED, message, socket, sender_adress);
+					handle_delete_request(message, socket, sender_adress)?;
 				}
 				_ => {
 					println!("Got method code: {}", message.header.code);
@@ -181,15 +186,75 @@ fn execute_request(message:CoapMessage, socket: UdpSocket, sender_adress: Socket
 	Ok("OK")
 }
 
-fn handle_post_request(message:CoapMessage, socket: UdpSocket, sender_adress: SocketAddr) -> Result<&'static str, &'static str>{
-	assert_eq!(message.header.coap_class, 0); //make sure the message is a method
-	assert_eq!(message.header.code, 2); //make sure the message is a POST
+fn handle_put_request(message:CoapMessage, socket: UdpSocket, sender_adress: SocketAddr) -> Result<&'static str, &'static str>{
+	assert_eq!(message.header.coap_class, CLASS_METHOD); //make sure the message is a method
+	assert_eq!(message.header.code, CODE_PUT); //make sure the message is a POST
 	
 	let path_string = parse_options_to_path(message.clone().option_list)?;
 	let code;
 	let class;
 	
-	println!("The file is: {}", path_string);
+	println!("Writing to file: {}", path_string);
+	
+	if Path::new(&path_string).exists(){
+		let file = OpenOptions::new().write(true).open(&path_string);
+		assert!(file.is_ok());
+		
+		let mut file = file.unwrap();
+		
+		
+		
+		file.write_all(&message.payload).expect("Unable to write data");
+		class = CLASS_SUCCESS;
+		code = CODE_CHANGED;
+	}
+	else {	
+		//File already exists		
+		class = CLASS_CLIENT_ERROR;
+		code = CODE_NOT_FOUND;
+	}
+	
+	send_coap_response(class, code, message, socket, sender_adress);
+	
+	Ok("OK")
+}
+
+fn handle_delete_request(message:CoapMessage, socket: UdpSocket, sender_adress: SocketAddr) -> Result<&'static str, &'static str>{
+	assert_eq!(message.header.coap_class, CLASS_METHOD); //make sure the message is a method
+	assert_eq!(message.header.code, CODE_DELETE); //make sure the message is a POST
+	
+	let path_string = parse_options_to_path(message.clone().option_list)?;
+	let code;
+	let class;
+	
+	println!("Removing file: {}", path_string);
+	
+	if Path::new(&path_string).exists(){
+		let file = fs::remove_file(&path_string);
+		assert!(file.is_ok());
+		class = CLASS_SUCCESS;
+		code = CODE_DELETED;
+	}
+	else {	
+		//File already exists		
+		class = CLASS_CLIENT_ERROR;
+		code = CODE_NOT_FOUND;
+	}
+	
+	send_coap_response(class, code, message, socket, sender_adress);
+	
+	Ok("OK")
+}
+
+fn handle_post_request(message:CoapMessage, socket: UdpSocket, sender_adress: SocketAddr) -> Result<&'static str, &'static str>{
+	assert_eq!(message.header.coap_class, CLASS_METHOD); //make sure the message is a method
+	assert_eq!(message.header.code, CODE_POST); //make sure the message is a POST
+	
+	let path_string = parse_options_to_path(message.clone().option_list)?;
+	let code;
+	let class;
+	
+	println!("Creating file: {}", path_string);
 	
 	if Path::new(&path_string).exists(){
 		//File already exists		
